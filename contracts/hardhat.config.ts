@@ -38,7 +38,25 @@ const config: HardhatUserConfig = {
     cache: "./cache",
   },
 
-  // Etherscan / explorer verification intentionally omitted — manage separately if needed
+  // Explorer verification config (optional) for Conflux-compatible explorers.
+  // If you want Hardhat to auto-verify contracts on Conflux explorer, set the
+  // following env vars in contracts/.env:
+  // CONFLUXSCAN_API_KEY, CONFLUXSCAN_API_URL, CONFLUXSCAN_BROWSER_URL
+  etherscan: {
+    apiKey: {
+      conflux: process.env.CONFLUXSCAN_API_KEY || "",
+    },
+    customChains: [
+      {
+        network: "conflux",
+        chainId: Number(process.env.CONFLUX_CHAIN_ID) || 71,
+        urls: {
+          apiURL: process.env.CONFLUXSCAN_API_URL || "https://evmtestnet.confluxscan.net/api",
+          browserURL: process.env.CONFLUXSCAN_BROWSER_URL || "https://evmtestnet.confluxscan.net",
+        },
+      },
+    ],
+  },
 };
 
 export default config;

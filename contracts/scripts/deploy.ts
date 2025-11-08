@@ -1,4 +1,8 @@
 import { ethers } from "hardhat";
+import hre from "hardhat";
+import * as dotenv from "dotenv";
+
+dotenv.config();
 
 async function main() {
   console.log("Deploying RealEstateToken contract on Conflux network...");
@@ -15,7 +19,19 @@ async function main() {
   console.log("Waiting for block confirmations...");
   await realEstateToken.deploymentTransaction()?.wait(5);
 
-  // Verify the contract
+  // Verify the contract only if an API key is provided and it looks like a key
+  const rawApi = process.env.CONFLUXSCAN_API_KEY || process.env.ETHERSCAN_API_KEY;
+  if (!rawApi) {
+    console.log("No explorer API key found in env; skipping automatic verification.");
+    return;
+  }
+
+  // Defensive: if user accidentally put a URL into the API key env (common mistake), skip verify
+  if (/^https?:\/\//i.test(rawApi)) {
+    console.log("Explorer API value looks like a URL rather than an API key; skipping verification.");
+    return;
+  }
+
   console.log("Verifying contract...");
   try {
     await hre.run("verify:verify", {
