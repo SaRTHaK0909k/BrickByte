@@ -1,7 +1,7 @@
 import { ethers } from "hardhat";
 
 async function main() {
-  console.log("Deploying RealEstateToken contract on ETH Sepolia testnet...");
+  console.log("Deploying RealEstateToken contract on Conflux network...");
 
   const RealEstateToken = await ethers.getContractFactory("RealEstateToken");
   const realEstateToken = await RealEstateToken.deploy();
