@@ -4,23 +4,22 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const { createClient } = require('@supabase/supabase-js');
-const { validateProperty } = require('./middleware/validate');
+const jwt = require('jsonwebtoken');
+const { expressjwt } = require('express-jwt');
+const { validateProperty, validateAuth } = require('./middleware/validate');
 const errorHandler = require('./middleware/errorHandler');
 
 // Initialize Express app
 const app = express();
 
-// Define allowed origins in one place so we can reuse for CORS and manual preflight handling
-const allowedOrigins = [
-  'http://localhost:3000',  // Local development
-  'https://brickbyte.vercel.app',  // Vercel frontend
-  'https://brickbytev24.vercel.app', // New Vercel domain
-  process.env.FRONTEND_URL  // Environment variable for additional domains
-].filter(Boolean);
-
 // Middleware
 app.use(cors({
-  origin: allowedOrigins,
+  origin: [
+    'http://localhost:3000',  // Local development
+    'https://brickbyte.vercel.app',  // Vercel frontend
+    'https://brickbytev24.vercel.app', // New Vercel domain
+    process.env.FRONTEND_URL  // Environment variable for additional domains
+  ].filter(Boolean),  // Remove any undefined values
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: [
     'Content-Type',
@@ -31,10 +30,7 @@ app.use(cors({
     'Access-Control-Request-Method',
     'Access-Control-Request-Headers',
     'X-CSRF-Token',
-    'X-API-Key',
-    // Wallet auth header used by frontend axios interceptor
-    'x-wallet-address',
-    'X-Wallet-Address'
+    'X-API-Key'
   ],
   exposedHeaders: ['Content-Range', 'X-Content-Range'],
   credentials: true,
@@ -42,21 +38,6 @@ app.use(cors({
   optionsSuccessStatus: 204,
   maxAge: 86400 // 24 hours
 }));
-
-// Explicit preflight handler: ensure custom headers (x-wallet-address) are always allowed
-app.use((req, res, next) => {
-  if (req.method === 'OPTIONS') {
-    const origin = req.headers.origin;
-    if (allowedOrigins.includes(origin)) {
-      res.setHeader('Access-Control-Allow-Origin', origin);
-    }
-    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-Token, X-API-Key, x-wallet-address');
-    res.setHeader('Access-Control-Max-Age', '86400');
-    return res.sendStatus(204);
-  }
-  next();
-});
 
 // Configure helmet with more permissive settings
 app.use(helmet({
@@ -93,7 +74,7 @@ app.use((err, req, res, next) => {
 app.use(morgan('dev'));
 app.use(express.json());
 
-// Initialize Supabase client (admin)
+// Initialize Supabase client
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -105,79 +86,136 @@ const publicSupabase = createClient(
   process.env.SUPABASE_ANON_KEY
 );
 
-// NOTE: JWT-based auth removed. We'll use wallet-address-based identification instead.
+// JWT middleware
+const jwtMiddleware = expressjwt({ 
+  secret: process.env.JWT_SECRET,
+  algorithms: ['HS256']
+}).unless({ path: ['/api/auth/login', '/api/auth/register'] });
 
-// Middleware to resolve user by wallet address header
-async function resolveUserByWallet(req, res, next) {
-  try {
-    const wallet = req.headers['x-wallet-address'] || req.body?.walletAddress;
-    if (!wallet) {
-      // no wallet provided — proceed without attaching user
-      return next();
-    }
-
-    const walletAddress = Array.isArray(wallet) ? wallet[0] : wallet;
-
-    const { data: profile, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('wallet_address', walletAddress)
-      .single();
-
-    if (error && error.code === 'PGRST116') {
-      // not found — create a lightweight profile
-      const { data: created, error: createErr } = await supabase
-        .from('profiles')
-        .insert([{ wallet_address: walletAddress, created_at: new Date().toISOString() }])
-        .select()
-        .single();
-      if (createErr) throw createErr;
-      req.user = created;
-    } else if (error) {
-      throw error;
-    } else {
-      req.user = profile;
-    }
-
-    next();
-  } catch (err) {
-    next(err);
-  }
-}
-
-app.use(resolveUserByWallet);
+// Apply JWT middleware
+app.use('/api', jwtMiddleware);
 
 // Authentication routes
-// Wallet connect endpoint — find or create profile by wallet address
-app.post('/api/auth/wallet-connect', async (req, res, next) => {
+app.post('/api/auth/register', validateAuth, async (req, res, next) => {
   try {
-    const { walletAddress } = req.body;
-    if (!walletAddress) return res.status(400).json({ message: 'walletAddress required' });
+    const { email, password, walletAddress } = req.body;
 
-    const { data: profile, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('wallet_address', walletAddress)
-      .single();
+    // First create the user with Supabase Auth using public client
+    const { data: authData, error: authError } = await publicSupabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          wallet_address: walletAddress
+        }
+      }
+    });
 
-    if (error && error.code === 'PGRST116') {
-      const { data: created, error: createErr } = await supabase
-        .from('profiles')
-        .insert([{ wallet_address: walletAddress, created_at: new Date().toISOString() }])
-        .select()
-        .single();
-      if (createErr) throw createErr;
-      return res.json({ user: created });
+    if (authError) {
+      throw authError;
     }
 
-    if (error) throw error;
-    return res.json({ user: profile });
-  } catch (err) {
-    next(err);
+    // Auto-confirm the email using admin API
+    const { error: confirmError } = await supabase.auth.admin.updateUserById(
+      authData.user.id,
+      { email_confirm: true }
+    );
+
+    if (confirmError) {
+      throw confirmError;
+    }
+
+    // Store additional user data in profiles table
+    const { error: profileError } = await supabase
+      .from('profiles')
+      .insert([
+        {
+          id: authData.user.id,
+          email,
+          wallet_address: walletAddress,
+          created_at: new Date().toISOString(),
+        },
+      ]);
+
+    if (profileError) {
+      // If profile creation fails, delete the auth user
+      await supabase.auth.admin.deleteUser(authData.user.id);
+      throw profileError;
+    }
+
+    // Generate JWT token
+    const token = jwt.sign(
+      { 
+        userId: authData.user.id,
+        email: authData.user.email,
+        walletAddress
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    res.status(201).json({
+      message: 'User registered successfully',
+      token,
+      user: {
+        id: authData.user.id,
+        email: authData.user.email,
+        walletAddress
+      }
+    });
+  } catch (error) {
+    next(error);
   }
 });
 
-// NOTE: login endpoint removed — wallet-connect handles user identification.
+app.post('/api/auth/login', validateAuth, async (req, res, next) => {
+  try {
+    const { email, password } = req.body;
+
+    // Attempt to sign in using public client
+    const { data: signInData, error: signInError } = await publicSupabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (signInError) {
+      throw signInError;
+    }
+
+    // Get user's wallet address from the database
+    const { data: profileData, error: profileError } = await supabase
+      .from('profiles')
+      .select('wallet_address')
+      .eq('id', signInData.user.id)
+      .single();
+
+    if (profileError) {
+      throw profileError;
+    }
+
+    // Generate JWT token
+    const token = jwt.sign(
+      { 
+        userId: signInData.user.id,
+        email: signInData.user.email,
+        walletAddress: profileData.wallet_address
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    res.json({
+      token,
+      user: {
+        id: signInData.user.id,
+        email: signInData.user.email,
+        walletAddress: profileData.wallet_address
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 
 // Properties endpoints
 app.get('/api/properties', async (req, res, next) => {
@@ -236,7 +274,7 @@ app.post('/api/properties', validateProperty, async (req, res, next) => {
       .from('properties')
       .insert([{
         ...req.body,
-      owner_id: req.user?.id || null,
+        owner_id: req.auth.userId,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       }])
@@ -263,7 +301,7 @@ app.get('/api/user/profile', async (req, res, next) => {
     const { data, error } = await supabase
       .from('profiles')
       .select('*')
-      .eq('id', req.user?.id)
+      .eq('id', req.auth.userId)
       .single();
 
     if (error) throw error;
@@ -305,7 +343,7 @@ app.post('/api/properties/:id/buy', async (req, res, next) => {
     const { data: existingShares, error: sharesError } = await supabase
       .from('user_shares')
       .select('shares')
-      .eq('user_id', req.user?.id)
+      .eq('user_id', req.auth.userId)
       .eq('property_id', propertyId)
       .single();
 
@@ -317,8 +355,8 @@ app.post('/api/properties/:id/buy', async (req, res, next) => {
     const { error: transactionError } = await supabase
       .from('transactions')
       .insert([{
-  property_id: propertyId,
-  user_id: req.user?.id,
+        property_id: propertyId,
+        user_id: req.auth.userId,
         type: 'BUY',
         shares,
         price_per_share: property.price_per_share,
@@ -332,7 +370,7 @@ app.post('/api/properties/:id/buy', async (req, res, next) => {
     const { error: shareError } = await supabase
       .from('user_shares')
       .upsert([{
-  user_id: req.user?.id,
+        user_id: req.auth.userId,
         property_id: propertyId,
         shares: newShares,
         updated_at: new Date().toISOString()
@@ -380,7 +418,7 @@ app.post('/api/properties/:id/sell', async (req, res, next) => {
     const { data: userShares, error: sharesError } = await supabase
       .from('user_shares')
       .select('shares')
-      .eq('user_id', req.user?.id)
+      .eq('user_id', req.auth.userId)
       .eq('property_id', propertyId)
       .single();
 
@@ -394,7 +432,7 @@ app.post('/api/properties/:id/sell', async (req, res, next) => {
       .from('transactions')
       .insert([{
         property_id: propertyId,
-  user_id: req.user?.id,
+        user_id: req.auth.userId,
         type: 'SELL',
         shares,
         price_per_share: property.price_per_share,
@@ -411,7 +449,7 @@ app.post('/api/properties/:id/sell', async (req, res, next) => {
         shares: newShareBalance,
         updated_at: new Date().toISOString()
       })
-      .eq('user_id', req.user?.id)
+      .eq('user_id', req.auth.userId)
       .eq('property_id', propertyId);
 
     if (updateError) throw updateError;
@@ -436,7 +474,7 @@ app.post('/api/properties/:id/sell', async (req, res, next) => {
 // Get user's shares
 app.get('/api/user/shares', async (req, res, next) => {
   try {
-  console.log('Fetching user shares for user:', req.user?.id);
+    console.log('Fetching user shares for user:', req.auth.userId);
     
     const { data, error } = await supabase
       .from('user_shares')
@@ -453,7 +491,7 @@ app.get('/api/user/shares', async (req, res, next) => {
           total_shares
         )
       `)
-      .eq('user_id', req.user?.id);
+      .eq('user_id', req.auth.userId);
 
     if (error) {
       console.error('Supabase error:', error);
@@ -471,7 +509,7 @@ app.get('/api/user/shares', async (req, res, next) => {
 // Get user's transactions
 app.get('/api/transactions', async (req, res, next) => {
   try {
-  console.log('Fetching transactions for user:', req.user?.id);
+    console.log('Fetching transactions for user:', req.auth.userId);
     
     const { data, error } = await supabase
       .from('transactions')
@@ -483,7 +521,7 @@ app.get('/api/transactions', async (req, res, next) => {
           price_per_share
         )
       `)
-      .eq('user_id', req.user?.id)
+      .eq('user_id', req.auth.userId)
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -504,7 +542,7 @@ app.get('/api/auth/verify', async (req, res, next) => {
   try {
     // The JWT middleware already verified the token
     // We just need to get the user data
-    const userId = req.user?.id;
+    const userId = req.auth.userId;
     
     const { data: user, error } = await supabase
       .from('profiles')

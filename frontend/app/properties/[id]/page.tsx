@@ -11,7 +11,6 @@ import { Toaster } from '@/components/ui/toaster';
 import { ethers } from 'ethers';
 import RealEstateToken from '@/contracts/RealEstateToken.json';
 import Cookies from 'js-cookie';
-import api from '@/lib/api';
 import { AIAnalysisModal } from '@/components/ai-analysis-modal';
 
 declare global {
@@ -56,8 +55,13 @@ export default function PropertyDetails() {
 
   const fetchPropertyDetails = async () => {
     try {
-      const resp = await api.get(`/api/properties/${id}`);
-      const data = resp.data;
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/properties/${id}`, {
+        headers: {
+          'Authorization': `Bearer ${Cookies.get('token')}`
+        }
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
       setProperty(data);
     } catch (err: any) {
       setError(err.message);
@@ -68,8 +72,14 @@ export default function PropertyDetails() {
 
   const fetchUserShares = async () => {
     try {
-      const resp = await api.get('/api/user/shares');
-      const data = resp.data;
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/user/shares`, {
+        headers: {
+          'Authorization': `Bearer ${Cookies.get('token')}`
+        }
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+      
       const propertyShares = data.find((share: any) => share.properties.id === id);
       setUserShares(propertyShares ? propertyShares.shares : 0);
     } catch (err: any) {
@@ -185,7 +195,18 @@ export default function PropertyDetails() {
       }
 
       // Record transaction in backend
-      await api.post(`/api/properties/${id}/${isBuying ? 'buy' : 'sell'}`, { shares: amount });
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/properties/${id}/${isBuying ? 'buy' : 'sell'}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${Cookies.get('token')}`
+        },
+        body: JSON.stringify({ shares: amount })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to record transaction');
+      }
 
       // Show final success toast
       toast({

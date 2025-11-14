@@ -9,7 +9,6 @@ import { TrendingUp, TrendingDown, DollarSign, Landmark, AlertCircle, BarChart3,
 import { useToast } from "@/hooks/use-toast"
 import { useRouter } from "next/navigation"
 import Cookies from "js-cookie"
-import api from '@/lib/api'
 
 interface Property {
   id: string;
@@ -120,9 +119,13 @@ export default function Portfolio() {
   const fetchUserShares = async () => {
     try {
       setLoading(true);
-      const resp = await api.get('/api/user/shares');
-      const data = resp.data;
-      if (!resp) throw new Error('Failed to fetch user shares')
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/user/shares`, {
+        headers: {
+          'Authorization': `Bearer ${Cookies.get('token')}`
+        }
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error)
       
       console.log('Raw user shares response:', data);
       if (data && data.length > 0) {
@@ -157,9 +160,20 @@ export default function Portfolio() {
   const fetchTransactions = async () => {
     try {
       console.log('Fetching transactions...');
-      const resp = await api.get('/api/transactions');
-      const data = resp.data;
-      setTransactions(data || [])
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/transactions`, {
+        headers: {
+          'Authorization': `Bearer ${Cookies.get('token')}`
+        }
+      })
+      console.log('Response status:', response.status);
+      const data = await response.json()
+      console.log('Response data:', data);
+      
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to fetch transactions');
+      }
+      
+      setTransactions(data)
     } catch (err: any) {
       console.error('Error fetching transactions:', err)
     }
@@ -422,4 +436,3 @@ export default function Portfolio() {
     </section>
   )
 }
-

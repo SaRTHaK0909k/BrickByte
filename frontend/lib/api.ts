@@ -11,10 +11,9 @@ const api = axios.create({
 // Request interceptor for API calls
 api.interceptors.request.use(
   (config) => {
-    // Use wallet address header instead of JWT
-    const wallet = Cookies.get('walletAddress');
-    if (wallet) {
-      config.headers['x-wallet-address'] = wallet;
+    const token = Cookies.get('token');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
     }
     return config;
   },

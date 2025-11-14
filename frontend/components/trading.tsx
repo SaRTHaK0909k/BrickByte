@@ -11,7 +11,6 @@ import { useToast } from "@/hooks/use-toast"
 import { ethers } from "ethers"
 import RealEstateToken from "@/contracts/RealEstateToken.json"
 import Cookies from "js-cookie"
-import api from '@/lib/api'
 import { Chart, ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { Line, LineChart, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip } from "recharts"
 import { Toaster } from "@/components/ui/toaster"
@@ -76,8 +75,13 @@ export default function Trading() {
 
   const fetchProperties = async () => {
     try {
-      const resp = await api.get('/api/properties');
-      const data = resp.data;
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/properties`, {
+        headers: {
+          'Authorization': `Bearer ${Cookies.get('token')}`
+        }
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error)
       setProperties(data)
     } catch (err: any) {
       console.error('Error fetching properties:', err)
@@ -88,8 +92,13 @@ export default function Trading() {
 
   const fetchUserShares = async () => {
     try {
-      const resp = await api.get('/api/user/shares');
-      const data = resp.data;
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/user/shares`, {
+        headers: {
+          'Authorization': `Bearer ${Cookies.get('token')}`
+        }
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error)
       setUserShares(data)
     } catch (err: any) {
       console.error('Error fetching user shares:', err)
@@ -204,7 +213,18 @@ export default function Trading() {
         })
 
         // Record transaction in backend
-        await api.post(`/api/properties/${selectedProperty.id}/buy`, { shares: amount })
+        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/properties/${selectedProperty.id}/buy`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${Cookies.get('token')}`
+          },
+          body: JSON.stringify({ shares: amount })
+        })
+
+        if (!response.ok) {
+          throw new Error('Failed to record transaction')
+        }
 
         toast({
           title: "Success",
@@ -235,7 +255,18 @@ export default function Trading() {
         })
 
         // Record transaction in backend
-        await api.post(`/api/properties/${selectedProperty.id}/sell`, { shares: amount })
+        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/properties/${selectedProperty.id}/sell`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${Cookies.get('token')}`
+          },
+          body: JSON.stringify({ shares: amount })
+        })
+
+        if (!response.ok) {
+          throw new Error('Failed to record transaction')
+        }
 
         toast({
           title: "Success",
@@ -446,4 +477,3 @@ export default function Trading() {
     </section>
   )
 }
-

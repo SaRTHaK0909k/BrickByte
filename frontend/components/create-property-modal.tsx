@@ -18,7 +18,6 @@ import { useProperties } from '@/hooks/use-properties';
 import { ethers } from 'ethers';
 import RealEstateToken from '@/contracts/RealEstateToken.json';
 import Cookies from 'js-cookie';
-import api from '@/lib/api';
 import { Toaster } from '@/components/ui/toaster';
 import { Plus } from 'lucide-react';
 
@@ -129,17 +128,28 @@ export function CreatePropertyModal({ onPropertyCreated }: CreatePropertyModalPr
       }
 
       // Create property in database
-      const payload = {
-        ...formData,
-        contract_address: CONTRACT_ADDRESS,
-        blockchain_property_id: propertyId,
-        total_shares: Number(totalShares),
-        available_shares: Number(totalShares),
-        price_per_share: Number(ethers.formatEther(pricePerShare)),
-        rental_yield: Number(rentalYield),
-      };
+      const response = await fetch('/api/properties', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${Cookies.get('token')}`,
+        },
+        body: JSON.stringify({
+          ...formData,
+          contract_address: CONTRACT_ADDRESS,
+          blockchain_property_id: propertyId,
+          total_shares: Number(totalShares),
+          available_shares: Number(totalShares),
+          price_per_share: Number(ethers.formatEther(pricePerShare)),
+          rental_yield: Number(rentalYield),
+        }),
+      });
 
-      const { data } = await api.post('/api/properties', payload);
+      if (!response.ok) {
+        throw new Error('Failed to create property');
+      }
+
+      const data = await response.json();
       
       // Show success toast
       toast({

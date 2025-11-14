@@ -32,39 +32,72 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const router = useRouter();
 
   useEffect(() => {
-    const wallet = Cookies.get('walletAddress');
-    if (wallet) {
-      verifyWallet(wallet);
+    const token = Cookies.get('token');
+    if (token) {
+      verifyToken();
     } else {
       setIsLoading(false);
     }
   }, []);
 
   const verifyToken = async () => {
-    // This function is deprecated in wallet-only flow
-    setIsLoading(false);
-  };
-
-  const verifyWallet = async (walletAddress: string) => {
     try {
-      const response = await api.post('/api/auth/wallet-connect', { walletAddress });
+      const response = await api.get('/api/auth/verify');
       setUser(response.data.user);
     } catch (error) {
-      Cookies.remove('walletAddress');
-      setUser(null);
+      Cookies.remove('token');
+      router.push('/login');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const login = async (_email: string, _password: string) => {
-    // no-op in wallet-only flow
-    return Promise.resolve();
+  const login = async (email: string, password: string) => {
+    try {
+      const response = await api.post('/api/auth/login', { email, password });
+      const { token, user } = response.data;
+      Cookies.set('token', token, { expires: 1 }); // Expires in 1 day
+      setUser(user);
+      toast({
+        title: 'Success',
+        description: 'Logged in successfully',
+      });
+      router.push('/dashboard');
+    } catch (error: any) {
+      const msg = error?.response?.data?.message || error?.response?.data?.details || error?.response?.data?.error || error.message || 'Login failed';
+      toast({
+        title: 'Error',
+        description: msg,
+        variant: 'destructive',
+      });
+      throw error;
+    }
   };
 
-  const register = async (_email: string, _password: string, _walletAddress: string) => {
-    // no-op in wallet-only flow
-    return Promise.resolve();
+  const register = async (email: string, password: string, walletAddress: string) => {
+    try {
+      const response = await api.post('/api/auth/register', {
+        email,
+        password,
+        walletAddress,
+      });
+      const { token, user } = response.data;
+      Cookies.set('token', token, { expires: 1 }); // Expires in 1 day
+      setUser(user);
+      toast({
+        title: 'Success',
+        description: 'Account created successfully',
+      });
+      router.push('/dashboard');
+    } catch (error: any) {
+      const msg = error?.response?.data?.message || error?.response?.data?.details || error?.response?.data?.error || error.message || 'Registration failed';
+      toast({
+        title: 'Error',
+        description: msg,
+        variant: 'destructive',
+      });
+      throw error;
+    }
   };
 
   const logout = () => {
@@ -89,13 +122,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
       const walletAddress = accounts[0];
       
-      // Persist wallet in cookie
-      Cookies.set('walletAddress', walletAddress, { expires: 30 });
-
-      // Find or create profile on backend
-      const response = await api.post('/api/auth/wallet-connect', { walletAddress });
-      const userObj = response.data.user;
-      setUser(userObj);
+      // Update user's wallet address in backend
+      if (user) {
+        await api.put(`/api/profiles/${user.id}`, {
+          wallet_address: walletAddress,
+        });
+        setUser({ ...user, walletAddress });
+      }
 
       toast({
         title: 'Success',

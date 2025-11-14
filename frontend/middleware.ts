@@ -2,7 +2,24 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
 export function middleware(request: NextRequest) {
-  // No global auth gating in wallet-only mode — allow all routes
+  const token = request.cookies.get('token')?.value;
+  const { pathname } = request.nextUrl;
+
+  // Public paths that don't require authentication
+  const publicPaths = ['/login', '/register', '/', '/properties', '/properties/[id]'];
+  
+  // If the path is public, allow access
+  if (publicPaths.some(path => pathname.startsWith(path))) {
+    return NextResponse.next();
+  }
+
+  // If there's no token and the path is not public, redirect to login
+  if (!token && !publicPaths.some(path => pathname.startsWith(path))) {
+    const loginUrl = new URL('/login', request.url);
+    loginUrl.searchParams.set('from', pathname);
+    return NextResponse.redirect(loginUrl);
+  }
+
   return NextResponse.next();
 }
 

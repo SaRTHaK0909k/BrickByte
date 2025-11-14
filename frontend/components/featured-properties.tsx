@@ -6,7 +6,6 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { MapPin, TrendingUp, ArrowRight } from "lucide-react"
 import Link from "next/link"
-import api from '@/lib/api'
 import { cn } from "@/lib/utils"
 import { PropertySkeleton } from "@/components/property-skeleton"
 import Cookies from "js-cookie"
@@ -88,8 +87,17 @@ export function FeaturedProperties() {
   const fetchProperties = async () => {
     try {
       setLoading(true);
-      const resp = await api.get('/api/properties');
-      const data = resp.data;
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/properties`, {
+        headers: {
+          'Authorization': `Bearer ${Cookies.get('token')}`
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch properties');
+      }
+      
+      const data = await response.json();
       setProperties(data);
       
       // Fetch valuations for all properties
